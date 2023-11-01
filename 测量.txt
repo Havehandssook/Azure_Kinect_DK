@@ -1,0 +1,116 @@
+#include"DK.h"
+
+KinectDK DK;
+Mat colorimg;
+Mat depthimg;
+k4a_imu_sample_t imu;
+
+k4a_float2_t point2D_1, point2D_2;
+k4a_float3_t point3D_1, point3D_2;
+
+//#define FPS
+
+int main()
+{
+	Rect red_max_rect;
+	int thresh_red = 170;
+	Mat image_edge_red;
+
+	DK.colorInit(COLOR_BGRA_1280x720_30Hz);
+	DK.depthInit(DEPTH_NFOV_640x576_30HZ);
+	DK.Configuration();
+
+	while (1)
+	{
+		high_resolution_clock::time_point t1 = high_resolution_clock::now();
+		DK.updateFrame();
+
+		DK.get_colorImage(colorimg, NOUSE);	
+
+		DK.get_depthImage(depthimg, DEPTH_ALIGN_TO_COLOR);
+
+		Mat src = colorimg.clone();
+		cvtColor(src, src, COLOR_BGRA2BGR);
+		Mat red = Mat::zeros(src.size(), CV_8UC1);
+		int rowNumber = src.rows;  //行数
+		int colNumber = src.cols * src.channels();  //列数 x 通道数=每一行元素的个数
+
+		for (int i = 0; i < rowNumber; i++)  //行循环
+		{
+			uchar* data = src.ptr<uchar>(i);  //获取第i行的首地址
+			uchar* data_red = red.ptr<uchar>(i);  //获取第i行的首地址
+			for (int j = 0, k = 0; j < colNumber; j = j + 3, k++)   //列循环
+			{
+
+				data_red[k] = saturate_cast<uchar>(saturate_cast<uchar>(data[j + 2] - data[j + 1]) +
+					saturate_cast<uchar>(data[j + 2] - data[j]) -
+					abs(data[j] - data[j + 1]));//红色
+			}
+		}
+		//二值化
+		cv::threshold(red, image_edge_red, thresh_red, 255, THRESH_BINARY);
+		
+		int max_red_area_num = 0;//最大面积轮廓号
+		double red_max_area = 0;
+
+		vector<Vec4i> hierarchy_red;
+		vector<vector<Point>> contours_red;
+		cv::findContours(image_edge_red, contours_red, hierarchy_red, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE, Point(0, 0));
+
+		for (size_t i = 0; i < contours_red.size(); i++)      //contours.size()为轮廓个数 
+		{
+			double red_area = fabs(contourArea(contours_red[i]));     //fabs取double类型的绝对值  contourArea计算面积
+
+			if (red_area > red_max_area)
+			{
+				red_max_area = red_area;
+				max_red_area_num = i;
+			}
+			red_max_rect = boundingRect(contours_red[max_red_area_num]);
+
+		}
+		rectangle(colorimg, red_max_rect, Scalar(0, 0, 255), 1, 8, 0);
+
+		circle(colorimg, Point(red_max_rect.x, red_max_rect.y), 2, Scalar(0, 255, 255), -1, 8, 0);
+		circle(colorimg, Point(red_max_rect.x+ red_max_rect.width, red_max_rect.y), 2, Scalar(0, 255, 255), -1, 8, 0);
+		
+
+		point2D_1.xy.x = red_max_rect.x;
+		point2D_1.xy.y = red_max_rect.y;
+
+		point2D_2.xy.x = red_max_rect.x + red_max_rect.width;
+		point2D_2.xy.y = red_max_rect.y;
+
+		DK.point2D_to_Point3D(point2D_1, float(depthimg.at<uint16_t>(point2D_1.xy.y, point2D_1.xy.x)), point3D_1);
+		DK.point2D_to_Point3D(point2D_2, float(depthimg.at<uint16_t>(point2D_2.xy.y, point2D_2.xy.x)), point3D_2);
+
+		char string1[20];
+		char string2[20];
+		sprintf(string1, "(%.1f %.1f)", point3D_1.xyz.x, point3D_1.xyz.y);
+		sprintf(string2, "(%.1f %.1f)", point3D_2.xyz.x, point3D_2.xyz.y);
+	
+
+		putText(colorimg, string1, Point(point2D_1.xy.x-200, point2D_1.xy.y), FONT_HERSHEY_PLAIN, 2, Scalar(0, 0, 255), 4, 4);
+		putText(colorimg, string2, Point(point2D_2.xy.x, point2D_2.xy.y), FONT_HERSHEY_PLAIN, 2, Scalar(0, 0, 255), 4, 4);
+
+		printf("long %f  \n", abs(point3D_1.xyz.x)- abs(point3D_2.xyz.x));
+
+		imshow("colorimg", colorimg);
+		//imshow("depthimg", depthimg);
+#ifdef FPS
+		high_resolution_clock::time_point t2 = high_resolution_clock::now();
+		duration<double> time_span = duration_cast<duration<double>>(t2 - t1);
+		printf("FPS:%.6f \n", 1 / time_span.count());
+#endif // FPS
+
+		DK.Release();
+
+		if (waitKey(1) == 27)
+		{
+			break;
+		}
+
+	}
+
+}
+
